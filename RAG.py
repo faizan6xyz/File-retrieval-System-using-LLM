@@ -10,7 +10,6 @@ for file in os.listdir(folder_path):
             text = f.read()
         paragraphs = text.split("\n\n")
         for paragraph in paragraphs:
-            paragraph = paragraph.strip()
             if paragraph:
                 all_chunks.append(paragraph)
 print(f"Total chunks: {len(all_chunks)}")
@@ -33,7 +32,7 @@ from rank_bm25 import BM25Okapi
 tokenized_chunks = [chunk.lower().split() for chunk in all_chunks]  # create a list of tokenized chunks for BM25
 bm25 = BM25Okapi(tokenized_chunks) # Initialize BM25 with the tokenized chunks, allowing for keyword-based search
 print("BM25 index created.")
-def retrieve(query, k=3):
+def retrieve(query, k=1):
     query_embedding = model.encode("Represent this sentence for searching relevant passages: " + query, convert_to_numpy=True) # Generate an embedding for the query, which will be used to perform a similarity search in the FAISS index. The query is prefixed with a prompt to guide the embedding model to produce a representation that is suitable for retrieving relevant passages based on semantic similarity.
     query_embedding = np.array([query_embedding], dtype=np.float32) # Reshape the query embedding to match the expected input shape for FAISS search.
     faiss.normalize_L2(query_embedding) # Normalize the query embedding to ensure that cosine similarity is equivalent to inner product search in FAISS.
@@ -55,7 +54,7 @@ def retrieve(query, k=3):
         print(f"Hybrid Score: {final_scores[idx]:.4f}")
         print(all_chunks[idx])
         print("-" * 60)
-    return [all_chunks[idx] for idx in top_indices] # Return the original text chunks corresponding to the top indices as retrieved results.
+    return [(all_chunks[idx], final_scores[idx]) for idx in top_indices] # Return a list of tuples containing the top k chunks and their corresponding final scores, allowing for further processing or display as needed. Each tuple consists of the chunk text and its associated relevance score based on the combined dense and BM25 scoring mechanism.
 if __name__ == "__main__": # This block ensures that the retrieval function is only executed when this script is run directly, allowing for modularity and preventing unintended execution when imported as a module in other scripts.
     while True:
         query = input("Enter your query (or 'exit' to quit): ")

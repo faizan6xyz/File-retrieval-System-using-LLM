@@ -16,7 +16,7 @@ else:
                 "Answer clearly and use the provided context when available.")}]
 print("Assistant ready.")
 print("Type 'exit' to quit.\n")
-SCORE_THRESHOLD = 0.6  #  Set a threshold for the relevance score to decide when to use retrieved context. If the top score from retrieval is below this threshold, the model will answer without using the retrieved context, treating the query as a normal question. Adjust this value based on experimentation to find the right balance between using relevant context and avoiding irrelevant information.
+SCORE_THRESHOLD = 0.9  #  Set a threshold for the relevance score to decide when to use retrieved context. If the top score from retrieval is below this threshold, the model will answer without using the retrieved context, treating the query as a normal question. Adjust this value based on experimentation to find the right balance between using relevant context and avoiding irrelevant information.
 while True:
     user_input = input("You: ")
     if user_input.lower() == "exit":
