@@ -5,7 +5,7 @@ from openai import OpenAI
 from Toolsusingduck import search_deep , search_news , search_web
 client = OpenAI(
   base_url = "https://integrate.api.nvidia.com/v1",
-  api_key = "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"
+  api_key = "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"
 )
 NIM_MODEL = "meta/llama-3.1-8b-instruct"
 TOOLS = {
@@ -63,8 +63,10 @@ def parse_response(text: str):
         return "tool", (tool, input_)
     return "unknown", text
 def save_report(topic: str, content: str):
+    folder = "results"
     filename = topic[:40].replace(" ", "_") + "_report.md"
-    with open(filename, "w", encoding="utf-8") as f:
+    filepath = os.path.join(folder, filename)
+    with open(filepath, "w", encoding="utf-8") as f:
         f.write(f"# Research Report: {topic}\n\n")
         f.write(content)
     print(f"\n Report saved → {filename}")
@@ -102,7 +104,7 @@ def run_research_agent(topic: str, max_steps: int = 15):
                 print(f" Got results ({search_count} searches done)")
             except Exception as e:
                 result = f"Tool error: {e}"
-                print(f"❌ Error: {e}")
+                print(f" Error: {e}")
             messages.append({"role": "assistant", "content": reply})
             messages.append({"role": "user",      "content": f"Search result:\n{result}"})
         else:
@@ -112,4 +114,9 @@ def run_research_agent(topic: str, max_steps: int = 15):
     print("\n Max steps reached — forcing final report.")
     return None
 if __name__ == "__main__":
-    run_research_agent("How does RAG work in AI systems")
+    while True:
+        prompt = input("Enter the query for research (or 'exit' to quit): ")
+        if prompt.lower() == "exit":
+            print("Goodbye!")
+            break
+        run_research_agent(prompt)

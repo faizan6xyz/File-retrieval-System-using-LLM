@@ -1,6 +1,5 @@
 from duckduckgo_search import DDGS
 def search_web(query: str, max_results: int = 5) -> str:
-# its a general web search
     try:
         with DDGS() as ddgs:
             results = list(ddgs.text(query, max_results=max_results))
@@ -17,7 +16,6 @@ def search_web(query: str, max_results: int = 5) -> str:
     except Exception as e:
         return f"Search error: {e}"
 def search_news(query: str, max_results: int = 5) -> str:
-    """Search recent news only"""
     try:
         with DDGS() as ddgs:
             results = list(ddgs.news(query, max_results=max_results))
@@ -35,10 +33,6 @@ def search_news(query: str, max_results: int = 5) -> str:
     except Exception as e:
         return f"News search error: {e}"
 def search_deep(query: str) -> str:
-    """
-    Searches and returns more results with longer content
-    Use this for important sub-topics that need thorough coverage
-    """
     try:
         with DDGS() as ddgs:
             results = list(ddgs.text(query, max_results=8))
