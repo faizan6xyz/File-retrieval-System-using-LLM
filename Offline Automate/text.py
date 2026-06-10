@@ -15,26 +15,43 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 OS = platform.system()  # "Windows" | "Linux" | "Darwin"
 def open_app(app_name: str) -> str:
     """Open an application by name."""
-    app_name = app_name.strip()
+    app_name = app_name.strip().lower()
     try:
         if OS == "Windows":
-            # Try direct command first, then common paths
             common_apps = {
-                "notepad": "notepad.exe",
-                "calculator": "calc.exe",
-                "paint": "mspaint.exe",
-                "explorer": "explorer.exe",
-                "chrome": r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-                "vscode": "code",
-                "cmd": "cmd.exe",
-                "terminal": "cmd.exe",
-                "word": "winword",
-                "excel": "excel",
-                "powerpoint": "powerpnt",
-                "vlc": r"C:\Program Files\VideoLAN\VLC\vlc.exe",
+                "notepad":       "notepad.exe",
+                "calculator":    "calc.exe",
+                "paint":         "mspaint.exe",
+                "explorer":      "explorer.exe",
+                "file explorer": "explorer.exe",
+                "files":         "explorer.exe",
+                "cmd":           "cmd.exe",
+                "terminal":      "cmd.exe",
+                "powershell":    "powershell.exe",
+                "task manager":  "taskmgr.exe",
+                "control panel": "control.exe",
+                "settings":      "ms-settings:",          # opens via start
+                "vscode":        "code",
+                "code":          "code",
+                "word":          "winword",
+                "excel":         "excel",
+                "powerpoint":    "powerpnt",
+                "chrome": r'"C:\Program Files\Google\Chrome\Application\chrome.exe"',
+                "firefox": r'"C:\Program Files\Mozilla Firefox\firefox.exe"',
+                "vlc":     r'"C:\Program Files\VideoLAN\VLC\vlc.exe"',
+                "spotify": rf'"C:\Users\{os.environ.get("USERNAME","")}\AppData\Roaming\Spotify\Spotify.exe"',
             }
-            cmd = common_apps.get(app_name.lower(), app_name)
-            subprocess.Popen(cmd, shell=True)
+            cmd = None
+            for key, val in common_apps.items():
+                if key in app_name or app_name in key:
+                    cmd = val
+                    break
+            if cmd is None:
+                cmd = app_name
+            if cmd.startswith("ms-"):
+                subprocess.Popen(f'start {cmd}', shell=True)
+            else:
+                subprocess.Popen(cmd, shell=True)
         elif OS == "Linux":
             subprocess.Popen([app_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         elif OS == "Darwin":

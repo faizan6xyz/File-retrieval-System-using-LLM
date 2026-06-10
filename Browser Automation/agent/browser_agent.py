@@ -124,7 +124,6 @@ What is the next action?"""
             await browser.close()
     async def _apply_stealth(self, page: Page):
         """Patch browser properties that reveal automation."""
-        # Try playwright-stealth if installed
         try:
             from playwright_stealth import stealth_async
             await stealth_async(page)
