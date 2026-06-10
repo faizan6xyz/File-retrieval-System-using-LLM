@@ -10,13 +10,14 @@ streamer = TextStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True) #
 HISTORY_FILE = "chat_history.json"
 if os.path.exists(HISTORY_FILE):
     with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-        messages = json.load(f) # Load the conversation history from a JSON file if it exists, allowing the assistant to maintain continuity in the dialogue across sessions. This enables the user to exit and return to the conversation later without losing any context, as the entire history of messages (both user and assistant) is preserved and can be used to inform future responses from the model.
+        content = f.read().strip()
+        messages = json.loads(content) if content else []
 else:
     messages = [{"role": "system","content": ("You are a helpful AI assistant. "
                 "Answer clearly and use the provided context when available.")}]
 print("Assistant ready.")
 print("Type 'exit' to quit.\n")
-SCORE_THRESHOLD = 0.9  #  Set a threshold for the relevance score to decide when to use retrieved context. If the top score from retrieval is below this threshold, the model will answer without using the retrieved context, treating the query as a normal question. Adjust this value based on experimentation to find the right balance between using relevant context and avoiding irrelevant information.
+SCORE_THRESHOLD = 0.8  #  Set a threshold for the relevance score to decide when to use retrieved context. If the top score from retrieval is below this threshold, the model will answer without using the retrieved context, treating the query as a normal question. Adjust this value based on experimentation to find the right balance between using relevant context and avoiding irrelevant information.
 while True:
     user_input = input("You: ")
     if user_input.lower() == "exit":

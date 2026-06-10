@@ -4,7 +4,7 @@ import faiss
 from sentence_transformers import SentenceTransformer
 from rank_bm25 import BM25Okapi
 def build_index(file_name, 
-                folder_path="Data", 
+                folder_path="../Data", 
                 index_path="rag_index.faiss", 
                 chunks_path="chunks.npy"):
     

@@ -66,13 +66,15 @@ def parse_response(text: str):
         return "tool", (tool, input_)
     return "unknown", text
 def save_report(topic: str, content: str):
-    folder = "../data"
+    folder = "../Data"
     filename = topic[:40].replace(" ", "_") + "_report.md"
     filepath = os.path.join(folder, filename)
     with open(filepath, "w", encoding="utf-8") as f:
         f.write(f"# Research Report: {topic}\n\n")
         f.write(content)
     print(f"\n Report saved → {filename}")
+    build_index(filename)
+    print("seach saved into the vector DB")
     return filename
 def run_research_agent(topic: str, max_steps: int = 15):
     print(f"\n Researching: {topic}")
@@ -123,4 +125,3 @@ if __name__ == "__main__":
             print("Goodbye!")
             break
         run_research_agent(prompt)
-        print("search added to the vector DB")

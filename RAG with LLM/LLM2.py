@@ -13,7 +13,8 @@ HISTORY_FILE = "chat_history.json"
 
 if os.path.exists(HISTORY_FILE):
     with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-        messages = json.load(f)
+        content = f.read().strip()
+        messages = json.loads(content) if content else []
 else:
     messages = [{"role": "system", "content": ("You are a helpful AI assistant. "
                 "Answer clearly and use the provided context when available.")}]
@@ -21,7 +22,7 @@ else:
 print("Assistant ready.")
 print("Type 'exit' to quit.\n")
 
-SCORE_THRESHOLD = 0.9
+SCORE_THRESHOLD = 0.8
 
 while True:
     user_input = input("You: ")
