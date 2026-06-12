@@ -17,11 +17,7 @@ Test-Path "C:\chrome-debug\Profile 23\Cookies"
 
 
 
-
-
-
 Manually login in once to save the info
-
 # Launch Chrome with the debug profile
 
 & "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe" `
@@ -29,4 +25,10 @@ Manually login in once to save the info
 --user-data-dir="C:\chrome-debug" `
 --profile-directory="Profile 23"
 
-login to those account that you need to work the automation on 
+# login to those account that you need to work the automation on 
+
+
+
+
+
+# you need to do this all only once 
