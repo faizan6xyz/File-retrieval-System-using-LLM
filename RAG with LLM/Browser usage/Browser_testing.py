@@ -1,16 +1,15 @@
 import os
 import time
-import json
-import shutil
-import sqlite3
-import base64
-import tempfile
-import ctypes
-import ctypes.wintypes
+import glob
+import socket
+import subprocess
+import requests as _requests
+
 from openai import OpenAI
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
+# ── API Client ─────────────────────────────────────────────────────────────────
 client = OpenAI(
     base_url="https://integrate.api.nvidia.com/v1",
     api_key="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"
@@ -21,6 +20,7 @@ NIM_MODEL = "meta/llama-3.1-8b-instruct"
 # ── Chrome profile config ──────────────────────────────────────────────────────
 CHROME_USER_DATA = r"C:\Users\faiza\AppData\Local\Google\Chrome\User Data"
 PROFILE_NAME     = "Profile 23"
+DEBUG_PORT       = 9222
 
 # ── Prompt ─────────────────────────────────────────────────────────────────────
 BROWSER_AGENT_PROMPT = """
@@ -133,57 +133,134 @@ def execute_action(page, action: str, target: str, value: str) -> bool:
         return False
 
 
-def launch_browser(playwright):
-    """
-    Launch Chrome with the real user profile so the user is already logged in.
-    Kills all existing Chrome instances first to free up the debug port.
-    """
-    import subprocess
-    import requests as _requests
-    import time as _time
+def is_port_free(port: int) -> bool:
+    """Check whether a TCP port is available on localhost."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(("127.0.0.1", port)) != 0
 
-    chrome_candidates = [
+
+def kill_chrome():
+    """Kill all Chrome processes and wait until none remain."""
+    print("[Browser] Killing existing Chrome instances...")
+    for _ in range(3):
+        subprocess.run(["taskkill", "/F", "/IM", "chrome.exe"], capture_output=True)
+        time.sleep(1)
+
+    # Wait until no chrome.exe process remains
+    print("[Browser] Waiting for Chrome processes to exit...")
+    for _ in range(20):
+        result = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq chrome.exe"],
+            capture_output=True, text=True
+        )
+        if "chrome.exe" not in result.stdout:
+            print("[Browser] All Chrome processes exited.")
+            break
+        time.sleep(0.5)
+    else:
+        print("[Browser] WARNING: Some Chrome processes may still be running.")
+
+
+def clear_profile_locks():
+    """Remove stale Chrome profile lock files that block reuse."""
+    patterns = [
+        os.path.join(CHROME_USER_DATA, PROFILE_NAME, "*.lock"),
+        os.path.join(CHROME_USER_DATA, PROFILE_NAME, "SingletonLock"),
+        os.path.join(CHROME_USER_DATA, PROFILE_NAME, "SingletonCookie"),
+        os.path.join(CHROME_USER_DATA, "SingletonLock"),
+        os.path.join(CHROME_USER_DATA, "SingletonCookie"),
+    ]
+    for pattern in patterns:
+        for f in glob.glob(pattern):
+            try:
+                os.remove(f)
+                print(f"[Browser] Removed lock file: {f}")
+            except Exception as e:
+                print(f"[Browser] Could not remove {f}: {e}")
+
+
+def wait_for_debug_port(timeout: int = 30):
+    """Poll until Chrome's remote-debug port responds or timeout is reached."""
+    print(f"[Browser] Waiting for Chrome debug port {DEBUG_PORT}...")
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            r = _requests.get(
+                f"http://127.0.0.1:{DEBUG_PORT}/json/version", timeout=1
+            )
+            if r.status_code == 200:
+                elapsed = timeout - (deadline - time.time())
+                print(f"[Browser] Chrome ready after {elapsed:.1f}s")
+                return
+        except Exception:
+            pass
+        time.sleep(0.5)
+    raise TimeoutError(
+        f"Chrome did not expose its debug port on :{DEBUG_PORT} within {timeout}s"
+    )
+
+
+def find_chrome_exe() -> str:
+    candidates = [
         r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
         r"C:\Program Files\Google\Chrome\Application\chrome.exe",
         os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
     ]
-    chrome_exe = next((p for p in chrome_candidates if os.path.exists(p)), None)
-    if not chrome_exe:
-        raise FileNotFoundError("Chrome.exe not found")
+    exe = next((p for p in candidates if os.path.exists(p)), None)
+    if not exe:
+        raise FileNotFoundError(
+            "chrome.exe not found in any standard location. "
+            "Set the path manually in find_chrome_exe()."
+        )
+    return exe
 
-    print(f"[Browser] Killing existing Chrome instances...")
-    for _ in range(3):
-        subprocess.run(["taskkill", "/F", "/IM", "chrome.exe"], capture_output=True)
-        _time.sleep(2)
 
-    print(f"[Browser] Starting Chrome with real profile: {PROFILE_NAME}")
-    subprocess.Popen([
+def launch_browser(playwright):
+    """
+    Kill Chrome, clear locks, start a fresh instance with remote debugging,
+    wait for the debug port, then connect Playwright over CDP.
+    """
+    kill_chrome()
+    clear_profile_locks()
+
+    # Make sure the port is actually free before we launch
+    if not is_port_free(DEBUG_PORT):
+        print(f"[Browser] Port {DEBUG_PORT} still in use — waiting up to 10s...")
+        for _ in range(20):
+            if is_port_free(DEBUG_PORT):
+                break
+            time.sleep(0.5)
+        else:
+            raise OSError(
+                f"Port {DEBUG_PORT} is still occupied after waiting. "
+                "Kill the process holding it manually."
+            )
+
+    chrome_exe = find_chrome_exe()
+    print(f"[Browser] Launching Chrome: {chrome_exe}")
+    print(f"[Browser] Profile: {PROFILE_NAME}")
+
+    proc = subprocess.Popen([
         chrome_exe,
-        "--remote-debugging-port=9222",
+        f"--remote-debugging-port={DEBUG_PORT}",
         f"--user-data-dir={CHROME_USER_DATA}",
         f"--profile-directory={PROFILE_NAME}",
         "--no-first-run",
         "--no-default-browser-check",
-    "--disable-extensions",
-    "--disable-background-networking",
+        "--disable-extensions",
+        "--disable-background-networking",
     ])
+    print(f"[Browser] Chrome PID: {proc.pid}")
 
-    print("[Browser] Waiting for Chrome to start...")
-    for i in range(60):
-        try:
-            _requests.get("http://127.0.0.1:9222/json/version", timeout=1)
-            print(f"[Browser] Chrome ready after {(i+1)*0.5:.1f}s")
-            break
-        except Exception:
-            _time.sleep(0.5)
-    else:
-        raise TimeoutError("Chrome did not start within 20 seconds")
+    wait_for_debug_port(timeout=30)
 
-    browser = playwright.chromium.connect_over_cdp("http://127.0.0.1:9222")
+    browser = playwright.chromium.connect_over_cdp(f"http://127.0.0.1:{DEBUG_PORT}")
     context = browser.contexts[0] if browser.contexts else browser.new_context()
-    print(f"[Browser] Connected. Contexts: {len(browser.contexts)}")
+    print(f"[Browser] Connected. Open contexts: {len(browser.contexts)}")
     return browser, context
 
+
+# ── Main agent loop ────────────────────────────────────────────────────────────
 
 def run_browser_agent(goal: str, start_url: str, max_steps: int = 20):
     print(f"\nGoal: {goal}")
@@ -194,8 +271,6 @@ def run_browser_agent(goal: str, start_url: str, max_steps: int = 20):
     last_actions = []
 
     with sync_playwright() as p:
-        print("[Browser] NOTE: Close all Chrome windows before continuing!")
-        input("[Browser] Press Enter when Chrome is fully closed...")
         browser, context = launch_browser(p)
 
         url = start_url.strip() if start_url.strip() else "https://www.google.com"
@@ -212,10 +287,12 @@ def run_browser_agent(goal: str, start_url: str, max_steps: int = 20):
             page.goto(url, wait_until="domcontentloaded", timeout=20000)
         except Exception as e:
             print(f"[Browser] goto warning (continuing): {e}")
+
         try:
             page.wait_for_selector("body", state="visible", timeout=15000)
         except Exception:
             pass
+
         print(f"[Browser] Page ready. URL: {page.url}")
         time.sleep(1)
 
@@ -259,7 +336,10 @@ def run_browser_agent(goal: str, start_url: str, max_steps: int = 20):
             if not success:
                 history.append({
                     "role": "user",
-                    "content": f"The action failed: {action} on '{target}'. Try a different selector or approach."
+                    "content": (
+                        f"The action failed: {action} on '{target}'. "
+                        "Try a different selector or approach."
+                    )
                 })
 
         else:
@@ -268,6 +348,8 @@ def run_browser_agent(goal: str, start_url: str, max_steps: int = 20):
         input("\nPress Enter to close browser...")
         browser.close()
 
+
+# ── Entry point ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     goal      = input("Enter your goal: ")
