@@ -9,7 +9,7 @@ import gradio as gr
 from openai import OpenAI
 client = OpenAI(
     base_url="https://integrate.api.nvidia.com/v1",
-    api_key="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"
+    api_key="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"
 )
 MODEL = "meta/llama-3.1-8b-instruct"
 LOG_FILE = "file_agent.log"
