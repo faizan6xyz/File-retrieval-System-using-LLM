@@ -1,4 +1,5 @@
 import os
+os.environ["FASTEMBED_CACHE_PATH"] = r"C:\Users\faiza\fastembed_models"
 import numpy as np
 import faiss
 from fastembed import TextEmbedding
