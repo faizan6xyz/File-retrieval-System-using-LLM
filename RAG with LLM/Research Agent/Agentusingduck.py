@@ -8,7 +8,7 @@ sys.path.append("..")  # path to the folder containing indexer.py
 from Rag_create import build_index
 client = OpenAI(
   base_url = "https://integrate.api.nvidia.com/v1",
-  api_key = "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"
+  api_key = "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"
 )
 NIM_MODEL = "meta/llama-3.1-8b-instruct"
 TOOLS = {
