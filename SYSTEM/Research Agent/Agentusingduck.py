@@ -8,7 +8,7 @@ sys.path.append("..")  # path to the folder containing indexer.py
 from Rag_create import build_index
 client = OpenAI(
   base_url = "https://integrate.api.nvidia.com/v1",
-  api_key = "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"
+  api_key = "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"
 )
 NIM_MODEL = "meta/llama-3.1-8b-instruct"
 TOOLS = {
@@ -73,7 +73,7 @@ FINAL ANSWER:
 # [Topic] — Research Report
 
 ## Overview
-[Comprehensive 2-3 paragraph summary — no detail left out]
+[Comprehensive 4-5 paragraph summary — no detail left out]
 
 ## Background & Context
 [History, origin, why this topic matters]

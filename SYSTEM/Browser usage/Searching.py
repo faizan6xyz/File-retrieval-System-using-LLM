@@ -54,6 +54,28 @@ def find_and_read_latest_snapshot() -> str:
         with open(latest_file, "r", encoding="utf-8") as f:
             return f.read()
     return ""
+QUERY_EXTRACT_PROMPT = """Extract just the search query from the user's goal.
+Strip away phrases like "search for", "on youtube", "on google", site names, etc.
+Reply with ONLY the search query text, nothing else.
+
+Example:
+Goal: "search python tutorials on youtube"
+Reply: python tutorials
+
+Goal: "find me research papers about transformers"
+Reply: research papers about transformers
+"""
+def extract_query(goal: str) -> str:
+    response = client.chat.completions.create(
+        model=NIM_MODEL,
+        messages=[
+            {"role": "system", "content": QUERY_EXTRACT_PROMPT},
+            {"role": "user", "content": goal},
+        ],
+        max_tokens=30,
+        temperature=0,
+    )
+    return response.choices[0].message.content.strip().strip('"')
 class MCPClient:
     def __init__(self, base_url: str = MCP_BASE):
         self.base_url    = base_url
@@ -286,8 +308,7 @@ def run_agent(goal: str, start_url: str):
         print("STUCK: Could not locate search input.")
         mcp.stop()
         return
-    query = goal.lower().replace("search", "").replace("on youtube", "") \
-                .replace("on wikipedia", "").replace("on google", "").strip()
+    query = extract_query(goal)
     print(f"  Query: {query!r}  →  ref: {ref}")
     #  Step 4: Type and submit 
     print("\n--- Step 4: Type and submit ---")
