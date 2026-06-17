@@ -1,0 +1,25 @@
+
+# setup for the 9222 port (close all the chrome tab before running this)
+
+"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir=C:\chrome-debug --profile-directory="Profile 23" --no-first-run --no-default-browser-check
+
+
+
+
+
+# Now verify the the 9222 port of the chrome has opened 
+# paste this url on another browser if this give a json reponse means 9222 port is opened if not then i wouldn't be reached 
+
+http://127.0.0.1:9222/json/version
+
+
+
+
+# now setup the Playwright MCP server  ( we are using HTTP one with 3000 as port )
+
+npx @playwright/mcp@latest --port 3000 --browser chromium --cdp-endpoint http://127.0.0.1:9222
+
+
+
+
+# then run your file playwrightserver_HTTP.py
