@@ -13,7 +13,7 @@ client = OpenAI(
 )
 NIM_MODEL = "meta/llama-3.1-8b-instruct"
 MCP_BASE = "http://localhost:3000/mcp"
-MAX_NAV_STEPS = 10 
+MAX_NAV_STEPS = 3 
 def extract_snapshot_path(text: str) -> str | None:
     match = re.search(r"\[Snapshot\]\(([^)]+)\)", text)
     return match.group(1) if match else None
@@ -444,3 +444,6 @@ if __name__ == "__main__":
     goal = input("Enter your goal : ").strip()
     start_url = input("Starting URL    : ").strip()
     run_agent(goal, start_url)
+    
+    
+    # instead of "click sent botton " use "click sent"
