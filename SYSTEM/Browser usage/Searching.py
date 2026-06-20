@@ -320,13 +320,12 @@ def run_agent1(goal: str, start_url: str):
     #  Step 4: Type and submit 
     print("\n--- Step 4: Type and submit ---")
     def attempt_type(target_ref, query_text):
-        time.sleep(2)
         return mcp.call_tool("browser_type", {
             "element": "search input",
             "target":  target_ref,
             "text":    query_text,
             "submit":  True,
-            "slowly":  True ,
+            "slowly":  False,
         })
     type_result = attempt_type(ref, query)
     print(f"  ↩ {type_result[:200]}")
@@ -357,7 +356,7 @@ def run_agent1(goal: str, start_url: str):
     # Let's try to send the whole thing if it fits, or a larger chunk
     # YouTube snapshots can be 100k+ chars. LLMs usually handle 32k-128k.
     # Let's send up to 30,000 chars to catch the results area.
-    snapshot_content = result_snapshot[:60000] 
+    snapshot_content = result_snapshot[:] 
     print(f"  [snapshot: {len(result_snapshot)} chars]")
     print(f"  preview:\n{result_snapshot[:600]}...")
     if confirm_success(snapshot_content, query):
