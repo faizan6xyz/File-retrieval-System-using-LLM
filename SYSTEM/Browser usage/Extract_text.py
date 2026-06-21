@@ -1,110 +1,33 @@
 import json
 import os
-import glob
 import re
 import time
+import glob
 import requests
-from openai import OpenAI
 import threading
+from openai import OpenAI
+
 
 client = OpenAI(
     base_url="https://integrate.api.nvidia.com/v1",
-    api_key=os.getenv("NVIDIA_API_KEY", "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")
+    api_key="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"
 )
 NIM_MODEL = "meta/llama-3.1-8b-instruct"
 MCP_BASE = "http://localhost:3000/mcp"
-MAX_NAV_STEPS = 3
+OUTPUT_DIR = "extracted_md"
+CHUNK_SIZE = 12000  # chars per LLM call, keeps us well under context limits
 
 
-def extract_snapshot_path(text: str) -> str | None:
-    match = re.search(r"\[Snapshot\]\(([^)]+)\)", text)
-    return match.group(1) if match else None
-
-
-def find_and_read_snapshot_file(filename: str) -> str:
-    current_dir = os.getcwd()
-    while True:
-        candidate = os.path.join(current_dir, ".playwright-mcp", filename)
-        if os.path.exists(candidate):
-            time.sleep(0.2)
-            with open(candidate, "r", encoding="utf-8") as f:
-                return f.read()
-        parent = os.path.dirname(current_dir)
-        if parent == current_dir:
-            break
-        current_dir = parent
-    return ""
-
-
-def find_and_read_latest_snapshot() -> str:
-    current_dir = os.getcwd()
-    latest_file, latest_mtime = None, 0
-    while True:
-        pattern = os.path.join(current_dir, ".playwright-mcp", "page-*.yml")
-        for f in glob.glob(pattern):
-            mtime = os.path.getmtime(f)
-            if mtime > latest_mtime:
-                latest_mtime, latest_file = mtime, f
-        parent = os.path.dirname(current_dir)
-        if parent == current_dir:
-            break
-        current_dir = parent
-    if latest_file:
-        print(f"    [found snapshot file: {latest_file}]")
-        time.sleep(0.2)
-        with open(latest_file, "r", encoding="utf-8") as f:
-            return f.read()
-    return ""
-
+# ---------------------------------------------------------------------------
+# MCP CLIENT (minimal — navigate + snapshot only)
+# ---------------------------------------------------------------------------
 
 class MCPClient:
     def __init__(self, base_url: str = MCP_BASE):
         self.base_url = base_url
         self._req_id = 0
         self._session_id = None
-        self._tools = []
-        self._keepalive_thread = None
-        self._stop_keepalive = threading.Event()
         self._lock = threading.Lock()
-
-    def _rpc(self, method: str, params: dict | None = None) -> dict:
-        with self._lock:
-            payload = {"jsonrpc": "2.0", "id": self._next_id(), "method": method}
-            if params:
-                payload["params"] = params
-            resp = self._do_post(payload)
-            if resp.status_code == 404:
-                print(f"[MCP] 404 body: {resp.text[:300]!r}")
-                print("[MCP] 404 — reconnecting...")
-                self._session_id = None
-                self._handshake()
-                resp = self._do_post(payload)
-            resp.raise_for_status()
-            if "mcp-session-id" in resp.headers:
-                self._session_id = resp.headers["mcp-session-id"]
-            return self._parse_sse(resp.text)
-
-    def _keepalive_loop(self):
-        """Send periodic pings to prevent session timeout"""
-        while not self._stop_keepalive.is_set():
-            try:
-                self._rpc("ping", {})
-            except Exception:
-                pass
-            self._stop_keepalive.wait(timeout=15)
-
-    def start(self):
-        self._handshake()
-        self._stop_keepalive.clear()
-        self._keepalive_thread = threading.Thread(target=self._keepalive_loop, daemon=True)
-        self._keepalive_thread.start()
-        print("[MCP] Handshake complete. Keepalive started.")
-
-    def stop(self):
-        self._stop_keepalive.set()
-        if self._keepalive_thread:
-            self._keepalive_thread.join(timeout=5)
-        print("[MCP] Done.")
 
     def _next_id(self) -> int:
         self._req_id += 1
@@ -116,6 +39,10 @@ class MCPClient:
         if self._session_id:
             h["mcp-session-id"] = self._session_id
         return h
+
+    def _do_post(self, payload: dict) -> requests.Response:
+        return requests.post(self.base_url, json=payload,
+                              headers=self._headers(), timeout=30)
 
     def _parse_sse(self, text: str) -> dict:
         results = []
@@ -140,9 +67,21 @@ class MCPClient:
             merged.update(r)
         return merged
 
-    def _do_post(self, payload: dict) -> requests.Response:
-        return requests.post(self.base_url, json=payload,
-                              headers=self._headers(), timeout=30)
+    def _rpc(self, method: str, params: dict | None = None) -> dict:
+        with self._lock:
+            payload = {"jsonrpc": "2.0", "id": self._next_id(), "method": method}
+            if params:
+                payload["params"] = params
+            resp = self._do_post(payload)
+            if resp.status_code == 404:
+                print("[MCP] 404 — reconnecting...")
+                self._session_id = None
+                self._handshake()
+                resp = self._do_post(payload)
+            resp.raise_for_status()
+            if "mcp-session-id" in resp.headers:
+                self._session_id = resp.headers["mcp-session-id"]
+            return self._parse_sse(resp.text)
 
     def _handshake(self):
         payload = {
@@ -151,7 +90,7 @@ class MCPClient:
             "params": {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {},
-                "clientInfo": {"name": "nim-nav-agent", "version": "1.0"},
+                "clientInfo": {"name": "llm-md-extractor", "version": "1.0"},
             },
         }
         resp = self._do_post(payload)
@@ -161,66 +100,25 @@ class MCPClient:
         self._do_post({"jsonrpc": "2.0", "method": "notifications/initialized"})
         print(f"[MCP] Session: {self._session_id}")
 
-    def _coerce_args(self, arguments: dict, tool_name: str) -> dict:
-        if tool_name == "browser_snapshot":
-            arguments.pop("filename", None)
-        schema = next((t["function"]["parameters"] for t in self._tools
-                        if t["function"]["name"] == tool_name), {})
-        props = schema.get("properties", {})
-        coerced = {}
-        for k, v in arguments.items():
-            etype = props.get(k, {}).get("type")
-            if etype == "boolean" and isinstance(v, str):
-                coerced[k] = v.lower() == "true"
-            elif etype == "number" and isinstance(v, str):
-                coerced[k] = float(v)
-            elif etype == "integer" and isinstance(v, str):
-                coerced[k] = int(v)
-            else:
-                coerced[k] = v
-        return coerced
-
-    def list_tools(self) -> list[dict]:
-        if self._tools:
-            return self._tools
-        result = self._rpc("tools/list")
-        allowed = {
-            "browser_navigate", "browser_snapshot", "browser_type",
-            "browser_click", "browser_press_key", "browser_wait_for",
-            "browser_scroll", "browser_navigate_back",
-        }
-        raw = [t for t in result.get("tools", []) if t["name"] in allowed]
-        self._tools = [
-            {"type": "function", "function": {
-                "name": t["name"],
-                "description": t.get("description", ""),
-                "parameters": t.get("inputSchema", {"type": "object", "properties": {}}),
-            }}
-            for t in raw
-        ]
-        print(f"[MCP] {len(self._tools)} tools exposed: "
-              f"{[t['function']['name'] for t in self._tools]}")
-        return self._tools
+    def start(self):
+        self._handshake()
 
     def call_tool(self, name: str, arguments: dict) -> str:
-        arguments = self._coerce_args(arguments, name)
-        print(f"    → {name}({json.dumps(arguments)[:150]})")
         for attempt in range(3):
             try:
                 result = self._rpc("tools/call", {"name": name, "arguments": arguments})
-                return self._process_result(name, result)
+                return self._extract_text(result)
             except Exception as e:
                 if "404" in str(e) or "Session not found" in str(e):
-                    print(f"    [WARN] Session lost (Attempt {attempt+1}). Reconnecting...")
+                    print(f"    [WARN] Session lost (attempt {attempt+1}). Reconnecting...")
                     self._session_id = None
                     self._handshake()
                     time.sleep(2)
                     continue
-                else:
-                    return f"### Error\n{str(e)}"
-        return "### Error\nFailed after multiple retries."
+                return f"### Error\n{e}"
+        return "### Error\nFailed after retries."
 
-    def _process_result(self, name: str, result: dict) -> str:
+    def _extract_text(self, result: dict) -> str:
         content = result.get("content", [])
         parts = []
         for c in content:
@@ -230,315 +128,214 @@ class MCPClient:
                 res_text = c["resource"].get("text", "")
                 if res_text:
                     parts.append(res_text)
-        text = "\n".join(parts) if parts else ""
-
-        if name == "browser_snapshot":
-            if text and len(text) > 20 and not text.startswith("### Snapshot"):
-                return text
-            if text:
-                path = extract_snapshot_path(text)
-                if path:
-                    file_content = find_and_read_snapshot_file(os.path.basename(path))
-                    if file_content:
-                        return file_content
-            return find_and_read_latest_snapshot() or "Snapshot empty."
-        return text if text else "OK"
+        return "\n".join(parts) if parts else ""
 
 
-NAV_PLANNER_PROMPT = """You are a focused TYPING assistant for browser automation.
-You are given an accessibility tree snapshot of a webpage and a user instruction
-describing what text to type and into which element.
+def find_and_read_latest_snapshot() -> str:
+    current_dir = os.getcwd()
+    latest_file, latest_mtime = None, 0
+    while True:
+        for f in glob.glob(os.path.join(current_dir, ".playwright-mcp", "page-*.yml")):
+            mtime = os.path.getmtime(f)
+            if mtime > latest_mtime:
+                latest_mtime, latest_file = mtime, f
+        parent = os.path.dirname(current_dir)
+        if parent == current_dir:
+            break
+        current_dir = parent
+    if latest_file:
+        time.sleep(0.2)
+        with open(latest_file, "r", encoding="utf-8") as f:
+            return f.read()
+    return ""
 
-Find the INPUT element the user is referring to.
-Look for elements with roles like 'combobox', 'textbox', 'searchbox', or 'input'.
-Match it to the element name or label mentioned in the user's instruction.
-Prefer elements marked [cursor=pointer] when multiple candidates could match.
+PRECLEAN_RE = re.compile(
+    r'^\s*-?\s*(?P<role>[a-zA-Z]+)'
+    r'(?:\s+"(?P<text>(?:[^"\\]|\\.)*)")?'
+    r'(?P<attrs>(?:\s*\[[^\]]+\])*)'
+)
+LEVEL_RE = re.compile(r'\[level=(\d+)\]')
 
-Extract:
-- ref: the EXACT ref string from the snapshot for the matching input element (e.g. "e42")
-- text: the exact text to type, taken verbatim from the instruction
-- submit: true if the instruction implies searching/submitting, else false
 
-Reply with ONLY this JSON object, nothing else:
-{"action": "type", "ref": "REF_FROM_SNAPSHOT", "text": "TEXT_TO_TYPE", "submit": true}
+def preclean_snapshot(snapshot: str) -> str:
+    """
+    Strips refs, cursor tags, and other raw attributes from the accessibility
+    tree BEFORE it goes anywhere near the LLM. This is the main slowdown fix —
+    raw snapshots are 80%+ structural noise; this keeps only role + text.
+    """
+    out = []
+    for line in snapshot.splitlines():
+        if not line.strip():
+            continue
+        m = PRECLEAN_RE.match(line)
+        if not m:
+            continue
+        text = (m.group("text") or "").strip()
+        if not text:
+            continue
+        role = m.group("role").lower()
+        level_match = LEVEL_RE.search(m.group("attrs") or "")
+        if role == "heading" and level_match:
+            out.append(f"HEADING(L{level_match.group(1)}): {text}")
+        elif role == "listitem":
+            out.append(f"LIST_ITEM: {text}")
+        elif role == "link":
+            out.append(f"LINK: {text}")
+        else:
+            out.append(text)
+    return "\n".join(out)
 
-If you cannot find a matching input element, reply with:
-{"action": "done", "ref": null, "text": null, "submit": false}
+# ---------------------------------------------------------------------------
+# LLM-DRIVEN MARKDOWN STRUCTURING
+# ---------------------------------------------------------------------------
+
+CHUNK_PROMPT = """You are converting raw web-page accessibility-tree data into clean,
+human-readable Markdown. You will be given ONE CHUNK of a larger page snapshot
+(it may start or end mid-section — that's fine).
+
+Rules:
+- Ignore noise: refs like [ref=e12], cursor/pointer tags, ARIA roles, raw attributes.
+- Turn headings into proper Markdown headings (##, ###, etc.) based on their hierarchy.
+- Turn lists into Markdown bullet or numbered lists.
+- Turn links into plain readable text (skip raw URLs unless they're clearly meaningful, like article links).
+- Merge fragmented text nodes into natural, readable paragraphs/sentences.
+- Drop purely structural or repeated UI chrome (nav bars, cookie banners, "Skip to content", footers with boilerplate links) unless it's the only content present.
+- Do NOT invent content. Only restructure what's actually present.
+- Output ONLY the Markdown for this chunk. No preamble, no explanation, no code fences.
+"""
+
+MERGE_PROMPT = """You are given several Markdown sections, each produced independently
+from consecutive chunks of the same web page. Merge them into ONE clean, coherent,
+human-readable Markdown document.
+
+Rules:
+- Remove duplicate headings, repeated boilerplate, or content that clearly appears in
+  multiple chunks (e.g. nav menus repeated at chunk boundaries).
+- Fix heading hierarchy so it makes sense as a single document (one main title, then
+  logically nested subsections).
+- Keep the actual page content's meaning and order intact — don't rewrite the substance,
+  just clean up structure and remove duplication/noise.
+- Output ONLY the final Markdown document. No preamble, no explanation, no code fences.
 """
 
 
-def plan_navigation_step(goal: str, snapshot: str) -> dict:
-    try:
-        response = client.chat.completions.create(
-            model=NIM_MODEL,
-            messages=[
-                {"role": "system", "content": NAV_PLANNER_PROMPT},
-                {"role": "user", "content": f"Instruction: {goal}\n\nSnapshot:\n{snapshot[:15000]}"},
-            ],
-            max_tokens=200,
-            temperature=0,
-        )
-        raw = response.choices[0].message.content.strip()
-        raw = re.sub(r"^```json\s*|\s*```$", "", raw.strip())
-        return json.loads(raw)
-    except Exception as e:
-        print(f"    [ERROR] Planning failed: {e}")
-        return {"action": "done", "ref": None, "text": None, "submit": False}
+def chunk_text(text: str, size: int) -> list[str]:
+    return [text[i:i + size] for i in range(0, len(text), size)]
 
 
-GOAL_CHECK_PROMPT = """You are an intelligent verification agent. 
-Your task is to determine if the user has ACTUALLY ARRIVED at the destination page they requested.
-
-User Goal: "{goal}"
-Current Page Snapshot: 
-{snapshot}
-
-CRITICAL VERIFICATION RULES:
-
-1. SIDEBAR vs. MAIN CONTENT (THE "GOOGLE DRIVE" RULE):
-   - Many apps (like Google Drive, Gmail, Outlook) have a permanent sidebar with links (e.g., "My Drive", "Bin", "Starred").
-   - **CRITICAL:** Seeing "Bin" in the sidebar/menu does NOT mean you are in the Bin. It just means the link exists.
-   - You are ONLY in the Bin if the **MAIN CONTENT AREA** (the large central part of the screen) shows deleted files, a "Empty Bin" button, or a heading that says "Bin" or "Trash".
-   - If the Main Content shows your regular files/folders, you are still on "My Drive", even if "Bin" is highlighted in the sidebar.
-
-2. URL PATH VERIFICATION:
-   - Check the URL in the snapshot.
-   - If Goal is "Bin": URL should contain "/trash", "/bin", or "/deleted".
-   - If URL is still "/my-drive" or "/drive/u/0/", you are NOT in the Bin.
-
-3. CONTENT VS. LINKS:
-   - If the goal is to "open" or "go to" a section, you must see the CONTENT of that section.
-   - Seeing a LINK or BUTTON that leads to the goal is NOT success.
-
-4. HOMEPAGE TRAP:
-   - If the snapshot shows a general feed, "Home", "Trending", or a search bar as the main focus, you are likely still on the Homepage. Return success: false.
-
-5. CONTENT VERIFICATION CHECKLIST:
-   - "Open Email": Look for a Sender Name, Subject Line, and Body Text in the main area. 
-     If these are present, you are NOT in the Inbox list anymore. You are in the email view.
-   - "Inbox List": Look for a list of rows with checkboxes and short summaries.
-
-DECISION PROCESS:
-1. Look at the URL. Does it match the goal? (e.g., /trash for Bin)
-2. Look at the Main Content Area (not the sidebar). What is displayed there?
-3. If Main Content shows regular files/folders → FAIL (Still on My Drive).
-4. If Main Content shows deleted items/empty state → SUCCESS.
-5. choose the ref where cursor=pointer is there
-
-Reply with ONLY a JSON object:
-{{"success": true/false, "reason": "Explain strictly. Mention the URL path and what is in the MAIN CONTENT area. If you only see a sidebar link, say 'Only saw sidebar link, main content is still [X]'."}}
-"""
-
-
-def check_goal_completion(goal: str, snapshot: str) -> dict:
-    content_snippet = snapshot[:8000]
-
+def llm_structure_chunk(chunk: str) -> str:
     response = client.chat.completions.create(
         model=NIM_MODEL,
         messages=[
-            {"role": "system", "content": GOAL_CHECK_PROMPT},
-            {"role": "user", "content": f"Goal: {goal}\n\nPage Content:\n{content_snippet}"},
+            {"role": "system", "content": CHUNK_PROMPT},
+            {"role": "user", "content": chunk},
         ],
-        max_tokens=100,
-        temperature=0,
+        max_tokens=1500,
+        temperature=0.2,
     )
-    raw = response.choices[0].message.content.strip()
-    raw = re.sub(r"^```json\s*|\s*```$", "", raw.strip())
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        return {"success": False, "reason": "Failed to parse LLM response"}
+    text = response.choices[0].message.content.strip()
+    return re.sub(r"^```(?:markdown)?\s*|\s*```$", "", text)
 
 
-# ---------------------------------------------------------------------------
-# EXTRACTION
-# ---------------------------------------------------------------------------
+def llm_merge_sections(sections: list[str], url: str, title_hint: str) -> str:
+    combined_input = "\n\n---CHUNK BOUNDARY---\n\n".join(sections)
+    response = client.chat.completions.create(
+        model=NIM_MODEL,
+        messages=[
+            {"role": "system", "content": MERGE_PROMPT},
+            {"role": "user", "content": f"Page source: {url}\n\n{combined_input}"},
+        ],
+        max_tokens=3000,
+        temperature=0.2,
+    )
+    text = response.choices[0].message.content.strip()
+    text = re.sub(r"^```(?:markdown)?\s*|\s*```$", "", text)
 
-EXTRACT_PLANNER_PROMPT = """You are a text-extraction assistant for browser automation.
-You are given an accessibility tree snapshot of a webpage and a user instruction
-describing what information to extract.
-
-Identify which parts of the snapshot are relevant to the instruction (e.g. article body,
-search results, table rows, email content, prices, headings).
-
-Reply with ONLY this JSON object, nothing else:
-{"action": "extract", "target_description": "short description of what to pull", "done": true}
-
-If the relevant content is NOT visible in this snapshot (e.g. you'd need to scroll or
-navigate further), reply with:
-{"action": "extract", "target_description": null, "done": false}
-"""
+    header = (
+        f"<!-- Source: {url} -->\n"
+        f"<!-- Extracted: {time.strftime('%Y-%m-%d %H:%M:%S')} -->\n\n"
+    )
+    return header + text.strip() + "\n"
 
 
-def plan_extraction_step(goal: str, snapshot: str) -> dict:
-    try:
-        response = client.chat.completions.create(
-            model=NIM_MODEL,
-            messages=[
-                {"role": "system", "content": EXTRACT_PLANNER_PROMPT},
-                {"role": "user", "content": f"Instruction: {goal}\n\nSnapshot:\n{snapshot[:15000]}"},
-            ],
-            max_tokens=150,
-            temperature=0,
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+MAX_WORKERS = 6
+MAX_CHUNKS = 15  # safety cap — past this, truncate rather than melt your token budget
+
+
+def structure_snapshot_with_llm(snapshot: str, url: str) -> str:
+    cleaned = preclean_snapshot(snapshot)
+    print(f"[Clean] {len(snapshot)} chars → {len(cleaned)} chars after noise removal")
+
+    chunks = chunk_text(cleaned, CHUNK_SIZE)
+    if len(chunks) > MAX_CHUNKS:
+        print(f"[Warn] {len(chunks)} chunks found, truncating to first {MAX_CHUNKS} "
+              f"(likely hitting references/footer boilerplate beyond this point)")
+        chunks = chunks[:MAX_CHUNKS]
+
+    print(f"[LLM] Processing {len(chunks)} chunk(s) with {MAX_WORKERS} parallel workers...")
+
+    sections = [None] * len(chunks)
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+        futures = {pool.submit(llm_structure_chunk, chunk): i for i, chunk in enumerate(chunks)}
+        done_count = 0
+        for future in as_completed(futures):
+            i = futures[future]
+            try:
+                sections[i] = future.result()
+            except Exception as e:
+                print(f"    [ERROR] Chunk {i+1} failed: {e}")
+                sections[i] = ""
+            done_count += 1
+            print(f"    → {done_count}/{len(chunks)} chunks done")
+
+    if len(sections) == 1:
+        header = (
+            f"<!-- Source: {url} -->\n"
+            f"<!-- Extracted: {time.strftime('%Y-%m-%d %H:%M:%S')} -->\n\n"
         )
-        raw = response.choices[0].message.content.strip()
-        raw = re.sub(r"^```json\s*|\s*```$", "", raw.strip())
-        return json.loads(raw)
-    except Exception as e:
-        print(f"    [ERROR] Extraction planning failed: {e}")
-        return {"action": "extract", "target_description": None, "done": False}
+        return header + sections[0].strip() + "\n"
 
+    print("    → merging chunks into final document")
+    return llm_merge_sections(sections, url, url.split("//")[-1].split("/")[0])
 
-def extract_text_from_snapshot(snapshot: str) -> str:
-    """
-    Pulls human-readable text out of a Playwright MCP accessibility-tree
-    snapshot (YAML-ish format). Each line typically looks like:
-        - text "Some visible text" [ref=e12]
-        - heading "Title here" [level=1] [ref=e3]
-        - link "Click here" [ref=e7]
-    This grabs the quoted string from every line that has one, regardless
-    of role, and skips structural noise.
-    """
-    if not snapshot:
-        return ""
-
-    lines_out = []
-    pattern = re.compile(r'^\s*-?\s*\w+\s+"((?:[^"\\]|\\.)*)"')
-
-    for line in snapshot.splitlines():
-        match = pattern.match(line)
-        if match:
-            text = match.group(1).strip()
-            if text:
-                lines_out.append(text)
-
-    deduped = []
-    for t in lines_out:
-        if not deduped or deduped[-1] != t:
-            deduped.append(t)
-
-    return "\n".join(deduped)
-
-
-def save_extracted_text(goal: str, text: str, out_dir: str = "extracted") -> str:
-    os.makedirs(out_dir, exist_ok=True)
-    safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", goal)[:50] or "extraction"
-    path = os.path.join(out_dir, f"{safe_name}_{int(time.time())}.txt")
+def save_markdown(markdown: str, title_hint: str) -> str:
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", title_hint)[:50] or "page"
+    path = os.path.join(OUTPUT_DIR, f"{safe_name}_{int(time.time())}.md")
     with open(path, "w", encoding="utf-8") as f:
-        f.write(text)
-    print(f"    [Saved] Extracted text → {path}")
+        f.write(markdown)
+    print(f"[Saved] {path}")
     return path
 
 
-def is_extraction_goal(goal: str) -> bool:
-    keywords = ("extract", "scrape", "pull the text", "get the text", "read the content")
-    g = goal.lower()
-    return any(k in g for k in keywords)
-
-
 # ---------------------------------------------------------------------------
-# AGENT LOOP
+# MAIN
 # ---------------------------------------------------------------------------
 
-def run_agent(goal: str, start_url: str):
+def extract_page_to_markdown(url: str) -> str:
     mcp = MCPClient()
     mcp.start()
-    mcp.list_tools()
-    print(f"\nGoal : {goal}")
-    print(f"URL  : {start_url}")
-    print("=" * 60)
 
-    import random
-    wait_time = random.uniform(1.5, 4.0)
-    mcp.call_tool("browser_navigate", {"url": start_url})
-    mcp.call_tool("browser_wait_for", {"time": wait_time})
+    print(f"[Navigate] {url}")
+    mcp.call_tool("browser_navigate", {"url": url})
+    mcp.call_tool("browser_wait_for", {"time": 2})
 
-    extraction_mode = is_extraction_goal(goal)
-    last_action_signature = ""
+    snapshot = mcp.call_tool("browser_snapshot", {})
+    if not snapshot or len(snapshot) < 20:
+        snapshot = find_and_read_latest_snapshot()
+    if not snapshot:
+        raise RuntimeError("Could not obtain a snapshot of the page.")
 
-    for step in range(1, MAX_NAV_STEPS + 1):
-        print(f"\n--- Step {step}: Planning ---")
+    markdown = structure_snapshot_with_llm(snapshot, url)
 
-        # 1. Get Current State
-        snapshot = mcp.call_tool("browser_snapshot", {})
-        if not snapshot or snapshot == "Snapshot empty.":
-            snapshot = find_and_read_latest_snapshot()
-        if not snapshot:
-            print("STUCK: Could not get snapshot.")
-            break
-
-        # 2. Extraction goals skip the navigation goal-check entirely
-        if extraction_mode:
-            plan = plan_extraction_step(goal, snapshot)
-            print(f"  [Plan]: extract - target={plan.get('target_description')} done={plan.get('done')}")
-
-            if plan.get("done") and plan.get("target_description"):
-                extracted = extract_text_from_snapshot(snapshot)
-                if extracted:
-                    print(f"\n--- EXTRACTED TEXT ({len(extracted)} chars) ---")
-                    print(extracted[:1000])
-                    save_extracted_text(goal, extracted)
-                else:
-                    print("  [Error] No extractable text found in snapshot.")
-                print("  [Extraction complete] Stopping.")
-                break
-            else:
-                print("  [Info] Relevant content not visible yet. Scrolling and retrying.")
-                mcp.call_tool("browser_scroll", {"direction": "down", "amount": 500})
-                mcp.call_tool("browser_wait_for", {"time": 1.5})
-                continue
-
-        # 3. Non-extraction goals: existing navigation/typing flow
-        status = check_goal_completion(goal, snapshot)
-        print(f"  [LLM Status]: Success={status.get('success')} | Reason: {status.get('reason', 'Unknown')}")
-
-        is_success = status.get("success", False)
-        if is_success:
-            reason_lower = status.get("reason", "").lower()
-            if "link" in reason_lower and not any(word in reason_lower for word in ["heading", "list", "content", "feed", "video"]):
-                print("  [SAFETY OVERRIDE] LLM confused a sidebar link with the destination page. Ignoring success.")
-                is_success = False
-
-        if is_success:
-            print(f"\n{'='*60}\nGOAL ACHIEVED: {status['reason']}\n{'='*60}")
-            break
-
-        plan = plan_navigation_step(goal, snapshot)
-        action = plan.get("action")
-
-        current_sig = f"{action}_{plan.get('ref', '')}_{plan.get('text', '')}"
-        if current_sig == last_action_signature:
-            print("  [LOOP DETECTED] Agent is repeating the same action. Stopping.")
-            break
-        last_action_signature = current_sig
-
-        print(f"  [Plan]: {action} - ref={plan.get('ref')} text={plan.get('text')}")
-
-        if action == "type":
-            ref = plan.get("ref")
-            text = plan.get("text")
-            submit = plan.get("submit", False)
-            if ref and text:
-                print(f"    → Typing '{text}' into {ref}")
-                mcp.call_tool("browser_type", {
-                    "element": "target input",
-                    "target": ref,
-                    "text": text,
-                    "slowly": False,
-                })
-                mcp.call_tool("browser_wait_for", {"time": 2})
-            else:
-                print("  [Error] Plan said type but missing ref or text.")
-        else:
-            print(f"  [Error] Unknown action: {action}")
-            break
-    else:
-        print("\nMax steps reached. Goal may not be achieved.")
-
-    mcp.stop()
+    title_hint = url.split("//")[-1].split("/")[0]
+    path = save_markdown(markdown, title_hint)
+    return path
 
 
 if __name__ == "__main__":
-    goal = input("Enter your goal : ").strip()
-    start_url = input("Starting URL    : ").strip()
-    run_agent(goal, start_url)
+    url = input("Enter the URL to extract : ").strip()
+    output_path = extract_page_to_markdown(url)
+    print(f"\nDone. Markdown saved to: {output_path}")
