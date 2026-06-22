@@ -1,10 +1,16 @@
 import os
 from openai import OpenAI
 import json
+# file imports 
+from Searching import run_agent1
+from Extract_text import extract_page_to_markdown
+from Navigation import run_agent
+from typeing import run_agent2
+    
 MODEL_NAME = "meta/llama-3.3-70b-instruct" # Or another suitable reasoning model
 client = OpenAI(
     base_url="https://integrate.api.nvidia.com/v1",
-    api_key="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"
+    api_key="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"
 )
 def get_next_step(goal, current_state, previous_steps):
     system_prompt = """
@@ -153,3 +159,8 @@ if __name__ == "__main__":
     print("\nHuman-readable steps:")
     for h in human:
         print(f"- {h}")
+    from Searching import run_agent1
+    from Extract_text import extract_page_to_markdown
+    from Navigation import run_agent
+    from typeing import run_agent2
+    

@@ -7,7 +7,7 @@ import time
 from openai import OpenAI
 client = OpenAI(
     base_url="https://integrate.api.nvidia.com/v1",
-    api_key="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"
+    api_key="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"
 )
 NIM_MODEL    = "meta/llama-3.1-8b-instruct"
 MCP_BASE     = "http://localhost:3000/mcp"

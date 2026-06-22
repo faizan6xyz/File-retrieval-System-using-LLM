@@ -344,7 +344,7 @@ def check_goal_completion(goal: str, snapshot: str) -> dict:
         return {"success": False, "reason": "Failed to parse LLM response"}
 
 
-def run_agent(goal: str, start_url: str):
+def run_agent2(goal: str, start_url: str):
     mcp = MCPClient()
     mcp.start()
     mcp.list_tools()
@@ -423,4 +423,4 @@ def run_agent(goal: str, start_url: str):
 if __name__ == "__main__":
     goal = input("Enter your goal : ").strip()
     start_url = input("Starting URL    : ").strip()
-    run_agent(goal, start_url)
+    run_agent2(goal, start_url)
