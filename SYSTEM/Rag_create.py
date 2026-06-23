@@ -166,3 +166,5 @@ def build_index(file_name,
     bm25 = BM25Okapi(tokenized_corpus)
     save_data(index, final_chunks, final_metadata, chunk_path, index_path, bm25)
     print(f"Indexing complete. Total vectors: {index.ntotal}")
+if __name__ == "__main__" :
+    build_index("texting.txt")

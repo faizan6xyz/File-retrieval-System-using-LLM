@@ -1,181 +1,126 @@
+import pdfplumber
 import numpy as np
 import faiss
 import os
+import re
+import pickle
 from fastembed import TextEmbedding
+from sklearn.metrics.pairwise import cosine_similarity
 from rank_bm25 import BM25Okapi
+os.environ["FASTEMBED_CACHE_PATH"] = r"C:\Users\faiza\fastembed_models"
+CHUNK_PATH  = "SYSTEM/RAG_data"
+INDEX_PATH  = os.path.join(CHUNK_PATH, "rag_index.faiss")
+CHUNKS_PATH = os.path.join(CHUNK_PATH, "chunks.npy")
+META_PATH   = os.path.join(CHUNK_PATH, "metadata.npy")
+BM25_PATH   = os.path.join(CHUNK_PATH, "bm25.pkl")
 _model = TextEmbedding("BAAI/bge-base-en-v1.5")
-def buildtext_vector(text, folder_path="SYSTEM/Data", chunk_path="SYSTEM/",
-                      index_path="rag_index.faiss", chunks_path="chunks.npy"):
-    new_embedding = np.array(list(_model.embed([text])), dtype=np.float32)
-    faiss.normalize_L2(new_embedding)   # L2 normalization rescales a vector so its length (magnitude) becomes exactly 1, while keeping its direction unchanged
-    dimension = new_embedding.shape[1]
-    full_index_path = os.path.join(chunk_path, index_path)
-    full_chunks_path = os.path.join(chunk_path, chunks_path)
-    if os.path.exists(full_index_path):
-        index = faiss.read_index(full_index_path)
-        print(f"Loaded existing FAISS index ({index.ntotal} vectors)")
+def load_db():
+    if not os.path.exists(INDEX_PATH):
+        print("No existing database found. Fresh start.")
+        return None, [], [], None
+    index            = faiss.read_index(INDEX_PATH)
+    existing_chunks  = np.load(CHUNKS_PATH, allow_pickle=True).tolist()
+    existing_metadata = np.load(META_PATH, allow_pickle=True).tolist() \
+                        if os.path.exists(META_PATH) else \
+                        [{"source": "unknown", "chunk_id": i} for i in range(len(existing_chunks))]
+    if os.path.exists(BM25_PATH):
+        with open(BM25_PATH, "rb") as f:
+            bm25 = pickle.load(f)
+        print("Loaded bm25.pkl")
     else:
-        index = faiss.IndexFlatIP(dimension)
-        print("Created new FAISS index")
-    existing_chunks = np.load(full_chunks_path, allow_pickle=True).tolist() \
-                       if os.path.exists(full_chunks_path) else []
-    index.add(new_embedding)
-    existing_chunks.append(text)
-    tmp_index_path = full_index_path + ".tmp" # temp file for backup and secuirty
-    tmp_chunks_path = full_chunks_path + ".tmp"
-    faiss.write_index(index, tmp_index_path)
-    np.save(tmp_chunks_path, np.array(existing_chunks, dtype=object))
-    os.replace(tmp_index_path, full_index_path)
-    os.replace(tmp_chunks_path, full_chunks_path)
-    print("Vectors stored:", index.ntotal)
-    print(f"chunks.npy updated → {len(existing_chunks)} chunk(s) total")
-    bm25 = BM25Okapi([chunk.lower().split() for chunk in existing_chunks])
-    print("BM25 index rebuilt over all chunks.")
-    return bm25
-
-def savepdf():
-    text1 = Extract_text()
-    buildtext_vector(text1)
-    
-
-if __name__ == "__main__" :
-    savepdf()
-
-
-
-
-'''
-1. PyMuPDF (fitz) - The "Swiss Army Knife"
-    Best for: General-purpose text extraction, speed, and reliability.
-    ✅ Fastest pure Python extractor for most PDFs
-    ✅ Handles both text-based and some complex layouts
-    ✅ Can extract images, metadata, and annotations
-    ❌ Struggles with heavily formatted tables
-    Use when: You need a reliable, fast default for 90% of PDFs.
-    
-        import fitz  # PyMuPDF
-        def extract_text_pymupdf(pdf_path):
-            doc = fitz.open(pdf_path)
-            text = ""
-            for page_num in range(len(doc)):
-                page = doc[page_num]
-                text += page.get_text()
-                if page_num < len(doc) - 1:
-                    text += "\n"
-            doc.close()
-            return text
-        text = extract_text_pymupdf("document.pdf")
-        print(text[:]) 
-
-2. pypdfium2 - The "Speed Demon"
-    Best for: Processing thousands of PDFs or very large files.
-    ✅ Extremely fast (uses C++ backend)
-    ✅ Low memory footprint
-    ❌ Less accurate with complex formatting
-    ❌ No table extraction
-    Use when: Speed is critical and layout precision is secondary.
-
-        import pypdfium2 as pdfium
-        def extract_text_pdfium(pdf_path):
-            doc = pdfium.PdfDocument(pdf_path)
-            text = ""
-            for page in doc:
-                text_page = page.get_textpage()
-                text += text_page.get_text_bounded()
-                text += "\n"
-            doc.close()
-            return text
-        text = extract_text_pdfium("document.pdf")
-
-3. pdfplumber - The "Layout Specialist"
-    Best for: Financial reports, invoices, and documents with tables.
-    ✅ Best-in-class table extraction
-    ✅ Preserves spatial layout (x,y coordinates)
-    ✅ Great for structured data extraction
-    ❌ Slower than PyMuPDF
-    Use when: You need to extract data from tables or preserve exact positioning.
-
-        import pdfplumber
-        def extract_text_pdfplumber(pdf_path):
-            pdf = pdfplumber.open(pdf_path)
-            text = ""
-            for page in pdf.pages:
-                text += page.extract_text() or ""
-                text += "\n"
-            pdf.close()
-            return text
-        text = extract_text_pdfplumber("document.pdf")
-
-4. pymupdf4llm - The "RAG Optimizer"
-    Best for: Preparing documents for LLMs and RAG systems.
-    ✅ Converts PDFs directly to Markdown
-    ✅ Preserves headers, lists, and code blocks
-    ✅ Built on top of PyMuPDF but optimized for AI
-    ❌ Newer, so fewer community examples
-    Use when: You're building a RAG pipeline and want structure-aware chunks.
-
-        import pymupdf4llm
-        def extract_markdown_from_pdf(pdf_path):
-            md_text = pymupdf4llm.to_markdown(pdf_path)
-            return md_text
-        markdown_text = extract_markdown_from_pdf("document.pdf")
-        print(markdown_text[:1000])
-
-5. Unstructured (local heavy lifter ) / LlamaParse (cloud heavy lifter)
-    Best for: Production-grade, messy, or scanned documents.
-    ✅ OCR built-in for scanned PDFs
-    ✅ Handles mixed media (images + text)
-    ✅ Auto-detects document type (invoice, article, etc.)
-    ❌ Heavy dependencies, slower, often requires API keys
-    Use when: You have no control over PDF quality or need enterprise-grade reliability.
-
-        from unstructured.partition.pdf import partition_pdf
-        def extract_with_unstructured(pdf_path):
-            elements = partition_pdf(filename=pdf_path , strategy="hi_res")
-            extracted_text = "\n".join([str(el) for el in elements])
-            return extracted_text
-        text = extract_with_unstructured("complex_document.pdf")
-        print(text[:500])
-
-
-        import nest_asyncio
-        from llama_parse import LlamaParse
-        async def extract_with_llamaparse(pdf_path, api_key):
-            parser = LlamaParse( api_key=api_key , result_type="markdown" , verbose=True )
-            documents = await parser.aload_data(pdf_path)
-            return documents[0].text
-        # Get key at: https://cloud.llamaindex.ai/
-        api_key = "your_llama_cloud_api_key"
-        text = nest_asyncio.run(extract_with_llamaparse("document.pdf", api_key))
-        print(text[:500])
-
-6. pdf2image + pytesseract - The "OCR Last Resort"
-    Best for: Scanned PDFs where other libraries fail.
-    ✅ Works on any image-based PDF
-    ❌ Very slow
-    ❌ Requires installing Tesseract OCR on Windows
-    ❌ Lower accuracy than cloud-based OCR
-    Use when: The PDF is purely images (scanned books, old archives)
-
-        from pdf2image import convert_from_path
-        import pytesseract
-        def extract_text_ocr(pdf_path):
-            images = convert_from_path(pdf_path)
-            text = ""
-            for image in images:
-                text += pytesseract.image_to_string(image)
-                text += "\n"
-            return text
-
-'''
-"""
-Comparison Table: Format Preservation
-
-| Library          | Headers/Titles | Tables      | Columns     | Lists       | Output Format    |
-| :---             | :---:          | :---:       | :---:       | :---:       | :---             |
-| pymupdf4llm      | ✅ Excellent   | ✅ Good     | ✅ Good     | ✅ Good     | Markdown         |
-| pdfplumber       | ❌ Manual      | ✅✅ Best   | ✅✅ Best   | ❌ Manual   | Raw Text + Coords|
-| PyMuPDF (fitz)   | ❌ Lost        | ❌ Poor     | ❌ Jumbled  | ❌ Lost     | Raw String       |
-| Unstructured     | ✅✅ Best      | ✅✅ Best   | ✅✅ Best   | ✅✅ Best   | JSON/Elements    |
-"""
-
+        print("bm25.pkl not found. Rebuilding from chunks...")
+        tokenized = [re.findall(r"\w+", chunk.lower()) for chunk in existing_chunks]
+        bm25 = BM25Okapi(tokenized)
+    if index.ntotal != len(existing_chunks):
+        raise ValueError(
+            f"Mismatch: FAISS has {index.ntotal} vectors but chunks.npy has {len(existing_chunks)}. Rebuild index."
+        )
+    if len(existing_metadata) != len(existing_chunks):
+        print("Warning: metadata count mismatch. Using placeholder metadata.")
+        existing_metadata = [{"source": "unknown", "chunk_id": i} for i in range(len(existing_chunks))]
+    print(f"Loaded rag_index.faiss : {index.ntotal} vectors")
+    print(f"Loaded chunks.npy      : {len(existing_chunks)} chunks")
+    print(f"Loaded metadata.npy    : {len(existing_metadata)} entries")
+    return index, existing_chunks, existing_metadata, bm25
+def save_db(index, all_chunks, all_metadata, bm25):
+    os.makedirs(CHUNK_PATH, exist_ok=True)
+    tmp_index    = INDEX_PATH.replace(".faiss", ".tmp")
+    tmp_chunks   = CHUNKS_PATH.replace(".npy", ".tmp")
+    tmp_metadata = META_PATH.replace(".npy", ".tmp")
+    tmp_bm25     = BM25_PATH.replace(".pkl", ".tmp")
+    faiss.write_index(index, tmp_index)
+    np.save(tmp_chunks,   np.array(all_chunks,   dtype=object))
+    np.save(tmp_metadata, np.array(all_metadata, dtype=object))
+    with open(tmp_bm25, "wb") as f:
+        pickle.dump(bm25, f)
+    os.replace(tmp_index,             INDEX_PATH)
+    os.replace(tmp_chunks   + ".npy", CHUNKS_PATH)
+    os.replace(tmp_metadata + ".npy", META_PATH)
+    os.replace(tmp_bm25,              BM25_PATH)
+def extract_text(pdf_path):
+    text = ""
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            text += page.extract_text() or ""
+            text += "\n"
+    return text
+def split_into_sentences(text):
+    sentences = re.split(r'(?<=[.!?])\s+(?=[A-Z])', text.strip())
+    sentences = [s.strip() for s in sentences if s.strip()]
+    return sentences
+def semantic_chunking(sentences, threshold=0.75, max_chunk_size=20):
+    if not sentences:
+        return []
+    print(f"Embedding {len(sentences)} sentences for semantic chunking...")
+    embeddings = np.array(list(_model.embed(sentences)), dtype=np.float32)
+    chunks = []
+    current_chunk = [sentences[0]]
+    for i in range(1, len(sentences)):
+        next_embedding = embeddings[i].reshape(1, -1)
+        chunk_mean     = np.mean(
+            embeddings[i - len(current_chunk):i], axis=0, keepdims=True
+        )
+        similarity = cosine_similarity(chunk_mean, next_embedding)[0][0]
+        if similarity >= threshold and len(current_chunk) < max_chunk_size:
+            current_chunk.append(sentences[i])
+        else:
+            chunks.append(" ".join(current_chunk))
+            current_chunk = [sentences[i]]
+    if current_chunk:
+        chunks.append(" ".join(current_chunk))
+    print(f"Created {len(chunks)} semantic chunks from {len(sentences)} sentences")
+    return chunks
+def save_pdf(file_name, threshold=0.75, max_chunk_size=20,folder_path="SYSTEM/Data"):
+    print(f"Processing: {pdf_path}")
+    index, all_chunks, all_metadata, bm25 = load_db()
+    pdf_path = os.path.join(folder_path, file_name)
+    text      = extract_text(pdf_path)
+    sentences = split_into_sentences(text)
+    chunks    = semantic_chunking(sentences, threshold=threshold, max_chunk_size=max_chunk_size)
+    if not chunks:
+        print("No chunks extracted from PDF.")
+        return
+    source_name = os.path.basename(pdf_path)
+    start_id    = len(all_chunks)
+    new_metadata = [
+        {"source": source_name, "chunk_id": start_id + i}
+        for i in range(len(chunks))
+    ]
+    print(f"Embedding {len(chunks)} chunks...")
+    embeddings = np.array(list(_model.embed(chunks)), dtype=np.float32)
+    faiss.normalize_L2(embeddings)
+    if index is None:
+        dimension = embeddings.shape[1]
+        index     = faiss.IndexFlatIP(dimension)
+    index.add(embeddings)
+    all_chunks.extend(chunks)
+    all_metadata.extend(new_metadata)
+    tokenized = [re.findall(r"\w+", chunk.lower()) for chunk in all_chunks]
+    bm25      = BM25Okapi(tokenized)
+    save_db(index, all_chunks, all_metadata, bm25)
+    print(f"Total vectors in FAISS : {index.ntotal}")
+    print(f"Total chunks           : {len(all_chunks)}")
+    print(f"Total metadata entries : {len(all_metadata)}")
+    print(f"{pdf_path} saved to database")
+if __name__ == "__main__":
+    save_pdf("h.pdf")
