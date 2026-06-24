@@ -1,0 +1,28 @@
+OpenCV (cv2)
+    What it's actually for: computer vision processing. Frame reading is a side-effect of decoding video for things like object detection, tracking, optical flow.
+    
+    Advantages:
+        Fast. Uses low-level video decoding (FFmpeg backend under the hood, but minimal Python overhead per frame).
+        Frame-as-array. Every frame comes back as a NumPy array (BGR) — perfect if you're immediately feeding it into a model (e.g. your YOLOv8 helmet detector) without an extra conversion step.
+        Fine-grained control. You control the read loop yourself — skip frames, stop early, apply per-frame logic (blur detection, motion detection, ROI cropping) inline without re-opening the video.
+        Lightweight dependency — no extra video-editing machinery, just decoding.
+        Random seeking via cap.set(cv2.CAP_PROP_POS_FRAMES, n) (though seeking accuracy varies by codec — see below).
+
+    Disadvantages:
+        Frame-accurate seeking is unreliable on some codecs (especially with variable frame rate video) — sequential reads are more trustworthy than jumping to a specific frame number.
+        No built-in video editing features (trimming, concatenation, audio handling) — it's not meant for that.
+        API is more verbose for simple "just give me a frame at time T" tasks.
+
+moviepy
+    What it's actually for: video editing/composition — cutting clips, overlaying text, combining audio/video, exporting. Frame extraction is a convenience method on top of that.
+    
+    Advantages:
+        Time-based API. clip.save_frame("out.jpg", t=5.0) — grab a frame at an exact timestamp without manually computing frame indices from fps. Very readable for one-off grabs.
+        Handles audio + video together if your pipeline ever needs that.
+        Good for editing tasks — if you're also trimming, splicing, adding subtitles, etc., alongside frame extraction, it's one tool for both.
+
+    Disadvantages:
+        Much slower for bulk extraction — every save_frame() call re-seeks internally; doing this in a loop for hundreds/thousands of frames is noticeably slower than OpenCV's sequential read.
+        Heavier dependency — pulls in more machinery (proglog, decorator, imageio, etc.) than you need if all you want is frames.
+        Returns frames in RGB (note: opposite of OpenCV's BGR) — easy bug source if you mix the two libraries in one pipeline.
+        Less control over the decode loop itself.
