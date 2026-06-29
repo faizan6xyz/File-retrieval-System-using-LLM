@@ -1,4 +1,5 @@
 import cv2
+import shutil
 import os
 from image_to_text_chunking import image_text
 def extract_frames(video_path , frames_per_second=1, quality=95):
@@ -46,6 +47,7 @@ def video_text(name, data_dir="SYSTEM/Data", frames_per_second=1, quality=95 ):
         return
     for item in os.listdir(videofolder):
         image_text(item , folder=videofolder,source=video_path)
-    os.rmdir(video_name)
+    shutil.rmtree(videofolder)
+    print(f"Cleaned up frame folder: {videofolder}")
 if __name__ == "__main__":
     video_text("xx.mp4")
