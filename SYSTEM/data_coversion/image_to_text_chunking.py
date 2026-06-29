@@ -6,7 +6,7 @@ from Rag_create import build_index_from_text
 def image_text(image_name):
     result, source = describe_image(image_name)
     if not result:
-        print(f"Nothing returned for {image_name} ny the Qwen")
+        print(f"Nothing returned for {image_name} by the Qwen")
         return None 
     print(f"About : {result}")
     build_index_from_text(result, source_name=source)

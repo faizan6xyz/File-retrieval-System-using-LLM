@@ -13,7 +13,8 @@ INDEX_PATH  = os.path.join(CHUNK_PATH, "rag_index.faiss")
 CHUNKS_PATH = os.path.join(CHUNK_PATH, "chunks.npy")
 META_PATH   = os.path.join(CHUNK_PATH, "metadata.npy")
 BM25_PATH   = os.path.join(CHUNK_PATH, "bm25.pkl")
-_model = TextEmbedding("BAAI/bge-base-en-v1.5")
+MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+_model = TextEmbedding(model_name=MODEL_NAME, local_files_only=True)
 def load_db():
     if not os.path.exists(INDEX_PATH):
         print("No existing database found. Fresh start.")
@@ -91,12 +92,12 @@ def semantic_chunking(sentences, threshold=0.75, max_chunk_size=20):
     print(f"Created {len(chunks)} semantic chunks from {len(sentences)} sentences")
     return chunks
 def save_pdf(file_name, threshold=0.75, max_chunk_size=20,folder_path="SYSTEM/Data"):
-    print(f"Processing: {pdf_path}")
-    index, all_chunks, all_metadata, bm25 = load_db()
     pdf_path = os.path.join(folder_path, file_name)
     if not os.path.exists(pdf_path):
         print(f" Error: File not found at {pdf_path}")
         return
+    index, all_chunks, all_metadata, bm25 = load_db()
+    print(f"Processing: {pdf_path}")
     text      = extract_text(pdf_path)
     sentences = split_into_sentences(text)
     chunks    = semantic_chunking(sentences, threshold=threshold, max_chunk_size=max_chunk_size)

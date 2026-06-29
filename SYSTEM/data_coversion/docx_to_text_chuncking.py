@@ -13,7 +13,8 @@ INDEX_PATH  = os.path.join(CHUNK_PATH, "rag_index.faiss")
 CHUNKS_PATH = os.path.join(CHUNK_PATH, "chunks.npy")
 META_PATH   = os.path.join(CHUNK_PATH, "metadata.npy")
 BM25_PATH   = os.path.join(CHUNK_PATH, "bm25.pkl")
-_model = TextEmbedding("BAAI/bge-base-en-v1.5")
+MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+_model = TextEmbedding(model_name=MODEL_NAME, local_files_only=True)
 def load_db():
     if not os.path.exists(INDEX_PATH):
         print("No existing database found. Fresh start.")
