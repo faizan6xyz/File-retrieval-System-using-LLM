@@ -28,12 +28,12 @@ processor = AutoProcessor.from_pretrained(
     max_pixels=512 * 28 * 28
 )
 print("Model loaded successfully.")
-def describe_image(name: str, folder_path="SYSTEM/Data", prompt: str = "Describe this image.", max_new_tokens: int = 300):
+def describe_image(image_path, prompt: str = "Describe this image.", max_new_tokens: int = 300):
     torch.cuda.empty_cache()
     gc.collect()
-    image_path = os.path.join(folder_path, name)
     img = Image.open(image_path).convert("RGB")
     img = img.resize((448, 448))
+    folder_path = os.path.dirname(image_path)
     resized_path = os.path.join(folder_path, "temp_resized.jpg")
     img.save(resized_path)
     try:
