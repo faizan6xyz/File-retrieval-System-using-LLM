@@ -167,4 +167,4 @@ Pull requests welcome. For major changes, open an issue first.
 
 **Faizan** — [@faizan6xyz](https://github.com/faizan6xyz)
 
-AI/ML Engineering Student · Freelance AI Engineer · Building local-first LLM systems
+AI/ML Engineering Student · Freelance AI Engineer + System Desinger
